@@ -1,0 +1,590 @@
+/** @jsxRuntime classic */
+/** @jsx React.createElement */
+// Minimal runtime declarations so TypeScript can type-check this file without
+// resolving the external `react` package. In a real project, remove these
+// shims and install `react` and `@types/react`.
+declare const React: any;
+declare function useState<T = any>(initial?: T): any;
+declare function useEffect(callback: () => void | (() => void), deps?: any[]): void;
+declare function useRef<T = any>(initial?: T): { current: T | null };
+type ReactNode = any;
+
+// Fallback JSX types for environments missing `@types/react` so the file
+// compiles in editors/CI that don't have the React type package installed.
+// This is a minimal, safe fallback and can be removed once `@types/react` is
+// available in the project.
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      [elemName: string]: any;
+    }
+  }
+}
+export {};
+
+// Simple local icon placeholders to avoid external dependencies in environments
+// where `lucide-react` isn't installed. These render a small emoji or label
+// and accept `className` so Tailwind classes remain applied.
+const IconPlaceholder = ({ children, className }: { children: ReactNode; className?: string }) => (
+  <span className={className} aria-hidden>
+    {children}
+  </span>
+);
+
+const Upload = (props: any) => <IconPlaceholder {...props}>📤</IconPlaceholder>;
+const Send = (props: any) => <IconPlaceholder {...props}>➡️</IconPlaceholder>;
+const LogOut = (props: any) => <IconPlaceholder {...props}>⎋</IconPlaceholder>;
+const User = (props: any) => <IconPlaceholder {...props}>👤</IconPlaceholder>;
+const FileText = (props: any) => <IconPlaceholder {...props}>📄</IconPlaceholder>;
+const Image = (props: any) => <IconPlaceholder {...props}>🖼️</IconPlaceholder>;
+const Trash2 = (props: any) => <IconPlaceholder {...props}>🗑️</IconPlaceholder>;
+const Download = (props: any) => <IconPlaceholder {...props}>⬇️</IconPlaceholder>;
+const BookOpen = (props: any) => <IconPlaceholder {...props}>📖</IconPlaceholder>;
+const Zap = (props: any) => <IconPlaceholder {...props}>⚡</IconPlaceholder>;
+const Brain = (props: any) => <IconPlaceholder {...props}>🧠</IconPlaceholder>;
+const Loader2 = (props: any) => <IconPlaceholder {...props}>⏳</IconPlaceholder>;
+const Eye = (props: any) => <IconPlaceholder {...props}>👁️</IconPlaceholder>;
+const Check = (props: any) => <IconPlaceholder {...props}>✔️</IconPlaceholder>;
+const X = (props: any) => <IconPlaceholder {...props}>✖️</IconPlaceholder>;
+
+// --- Local types used in this file ---
+type UploadedFile = {
+  id: number;
+  name: string;
+  type: string;
+  size: number;
+  uploadDate: Date;
+  processed: boolean;
+  ocrText?: string;
+};
+
+type Message = {
+  type: 'user' | 'ai' | 'system';
+  content: string;
+  mode?: string;
+  sources?: string[];
+  timestamp: Date;
+};
+
+type ConversationEntry = { role: 'user' | 'assistant'; content: string };
+
+// Mock AI Response Generator (simulates backend API)
+const generateAIResponse = async (
+  question: string,
+  context: string,
+  mode: string,
+  conversationHistory: ConversationEntry[]
+): Promise<string> => {
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  const responses = {
+    summary: `📝 **Summary:**\n\nBased on the uploaded materials, here's a concise overview:\n\n${context.slice(0, 200)}...\n\nKey points extracted from your study materials with relevant context.`,
+    detailed: `📚 **Detailed Explanation:**\n\n**Question:** ${question}\n\n**Answer:**\nBased on the content analysis of your uploaded materials, here's a comprehensive explanation:\n\n${context.slice(0, 300)}...\n\n**Additional Context:**\nThe AI model has analyzed the semantic meaning and provides this detailed breakdown with source references.\n\n**Sources:** [Document 1, Page 2], [Document 2, Page 5]`,
+    flashcard: `🎴 **Flashcard Generated:**\n\n**Front:** ${question}\n\n**Back:** ${context.slice(0, 150)}...\n\n**Hint:** Focus on key concepts and definitions\n\n**Difficulty:** Medium\n\n*Click to save this flashcard to your collection*`,
+    conversational: `💬 ${context.slice(0, 250)}...\n\nBased on the context from your uploaded materials, this provides a clear answer to: "${question}"\n\n**Referenced from:** Document sections with highest semantic similarity.`
+  };
+  
+  return (responses as any)[mode] || responses.conversational;
+};
+
+// Mock OCR Processor
+const processOCR = async (file: File): Promise<string> => {
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  return `Extracted text from ${file.name}:\n\nSample extracted content including headings, paragraphs, and structured data. OCR processing complete with 98% accuracy.`;
+};
+
+// Mock Vector Search
+const performSemanticSearch = async (query: string, documents: UploadedFile[]): Promise<UploadedFile[]> => {
+  await new Promise(resolve => setTimeout(resolve, 800));
+  return documents.slice(0, 3);
+};
+
+const StudyMateApp = () => {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [currentUser, setCurrentUser] = useState<{ email: string; name: string } | null>(null);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authForm, setAuthForm] = useState<{ email: string; password: string; name?: string }>({ email: '', password: '', name: '' });
+
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState<string>('');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [selectedMode, setSelectedMode] = useState<'conversational' | 'summary' | 'detailed' | 'flashcard'>('conversational');
+  const [ocrPreview, setOcrPreview] = useState<UploadedFile | null>(null);
+  const [showOcrModal, setShowOcrModal] = useState<boolean>(false);
+  const [conversationHistory, setConversationHistory] = useState<ConversationEntry[]>([]);
+
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Load user session
+  useEffect(() => {
+    const user = sessionStorage.getItem('studymate_user');
+    if (user) {
+      setCurrentUser(JSON.parse(user));
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Authentication handlers
+  const handleAuth = (e: any) => {
+    e.preventDefault();
+    if (authMode === 'login') {
+      const user = { email: authForm.email, name: authForm.name || authForm.email.split('@')[0] };
+      sessionStorage.setItem('studymate_user', JSON.stringify(user));
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      setMessages([{
+        type: 'system',
+        content: `Welcome back, ${user.name}! Upload your study materials to get started.`,
+        timestamp: new Date()
+      }]);
+    } else {
+      const user = { email: authForm.email, name: authForm.name };
+      sessionStorage.setItem('studymate_user', JSON.stringify(user));
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      setMessages([{
+        type: 'system',
+        content: `Account created! Welcome, ${user.name}! Start by uploading your study materials.`,
+        timestamp: new Date()
+      }]);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('studymate_user');
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    setUploadedFiles([]);
+    setMessages([]);
+    setConversationHistory([]);
+  };
+
+  // File upload handler
+  const handleFileUpload = async (e: any) => {
+    const files = Array.from(e.target.files ?? []) as File[];
+    setIsProcessing(true);
+    
+    for (const file of files) {
+      const fileObj: UploadedFile = {
+        id: Date.now() + Math.random(),
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        uploadDate: new Date(),
+        processed: false
+      };
+
+      setUploadedFiles((prev: UploadedFile[]) => [...prev, fileObj]);
+
+      // Simulate OCR processing for images and PDFs
+      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        const ocrText = await processOCR(file);
+        fileObj.ocrText = ocrText;
+        fileObj.processed = true;
+        setUploadedFiles((prev: UploadedFile[]) => prev.map((f: UploadedFile) => f.id === fileObj.id ? fileObj : f));
+      } else {
+        fileObj.processed = true;
+        setUploadedFiles((prev: UploadedFile[]) => prev.map((f: UploadedFile) => f.id === fileObj.id ? fileObj : f));
+      }
+
+      setMessages((prev: Message[]) => [...prev, {
+        type: 'system',
+        content: `✅ Successfully processed: ${file.name}`,
+        timestamp: new Date()
+      }]);
+    }
+
+    setIsProcessing(false);
+  };
+
+  // View OCR preview
+  const viewOcrPreview = (file: UploadedFile) => {
+    setOcrPreview(file);
+    setShowOcrModal(true);
+  };
+
+  // Delete file
+  const deleteFile = (fileId: number) => {
+    setUploadedFiles((prev: UploadedFile[]) => prev.filter((f: UploadedFile) => f.id !== fileId));
+    setMessages((prev: Message[]) => [...prev, {
+      type: 'system',
+      content: `🗑️ File removed from workspace`,
+      timestamp: new Date()
+    }]);
+  };
+
+  // Send message handler
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() || uploadedFiles.length === 0) return;
+
+    const userMessage = {
+      type: 'user',
+      content: inputMessage,
+      timestamp: new Date()
+    };
+
+    setMessages((prev: Message[]) => [...prev, userMessage]);
+    setInputMessage('');
+    setIsProcessing(true);
+
+    // Simulate semantic search
+    const relevantDocs = await performSemanticSearch(inputMessage, uploadedFiles);
+    const context = relevantDocs.map(doc => doc.ocrText || doc.name).join('\n');
+
+    // Update conversation history
+    const updatedHistory = [...conversationHistory, { role: 'user', content: inputMessage }];
+    setConversationHistory(updatedHistory);
+
+    // Generate AI response
+    const aiResponse = await generateAIResponse(inputMessage, context, selectedMode, updatedHistory);
+
+    const aiMessage = {
+      type: 'ai',
+      content: aiResponse,
+      mode: selectedMode,
+      sources: relevantDocs.map(d => d.name),
+      timestamp: new Date()
+    };
+
+  setMessages((prev: Message[]) => [...prev, aiMessage]);
+    setConversationHistory([...updatedHistory, { role: 'assistant', content: aiResponse }]);
+    setIsProcessing(false);
+  };
+
+  // Login/Signup Screen
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/20"></div>
+        <div className="relative z-10 w-full max-w-md">
+          <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl mb-4">
+                <Brain className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                StudyMate.ai
+              </h1>
+              <p className="text-gray-600 mt-2">Your AI-Powered Study Assistant</p>
+            </div>
+
+            <div className="flex gap-2 mb-6">
+              <button
+                onClick={() => setAuthMode('login')}
+                className={`flex-1 py-2 px-4 rounded-xl font-medium transition-all ${
+                  authMode === 'login'
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Login
+              </button>
+              <button
+                onClick={() => setAuthMode('signup')}
+                className={`flex-1 py-2 px-4 rounded-xl font-medium transition-all ${
+                  authMode === 'signup'
+                    ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Sign Up
+              </button>
+            </div>
+
+            <form onSubmit={handleAuth} className="space-y-4">
+              {authMode === 'signup' && (
+                <input
+                  type="text"
+                  placeholder="Full Name"
+                  value={authForm.name}
+                  onChange={(e: any) => setAuthForm({...authForm, name: e.target.value})}
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+                />
+              )}
+              <input
+                type="email"
+                placeholder="Email Address"
+                value={authForm.email}
+                onChange={(e: any) => setAuthForm({...authForm, email: e.target.value})}
+                className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={authForm.password}
+                onChange={(e: any) => setAuthForm({...authForm, password: e.target.value})}
+                className="w-full px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all"
+              />
+              <button
+                type="submit"
+                className="w-full py-3 px-4 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold hover:from-indigo-600 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl transform hover:scale-105"
+              >
+                {authMode === 'login' ? 'Login' : 'Create Account'}
+              </button>
+            </form>
+
+            <p className="text-center text-sm text-gray-500 mt-6">
+              Demo version - Uses free IBM Granite 3.2 2B model
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main Application Interface
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+              <Brain className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
+                StudyMate.ai
+              </h1>
+              <p className="text-xs text-gray-500">AI Study Assistant</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 rounded-xl">
+              <User className="w-4 h-4 text-gray-600" />
+              <span className="text-sm font-medium text-gray-700">{currentUser?.name}</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-5 h-5 text-gray-600" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-88px)]">
+        {/* Left Sidebar - File Management */}
+        <div className="lg:col-span-1 bg-white rounded-2xl shadow-lg p-4 overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-indigo-600" />
+              Study Materials
+            </h2>
+            <span className="px-3 py-1 bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-full">
+              {uploadedFiles.length} files
+            </span>
+          </div>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            multiple
+            accept=".pdf,.txt,.ppt,.pptx,image/*"
+            className="hidden"
+          />
+
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isProcessing}
+            className="w-full py-3 px-4 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold hover:from-indigo-600 hover:to-purple-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mb-4"
+          >
+            <Upload className="w-5 h-5" />
+            Upload Materials
+          </button>
+
+          <div className="flex-1 overflow-y-auto space-y-2">
+            {uploadedFiles.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Upload className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p className="text-sm">No files uploaded yet</p>
+                <p className="text-xs mt-1">Upload PDFs, images, or documents</p>
+              </div>
+            ) : (
+              uploadedFiles.map((file: UploadedFile) => (
+                <div key={file.id} className="bg-gray-50 rounded-xl p-3 hover:bg-gray-100 transition-colors group">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                      {file.type.startsWith('image/') ? (
+                        <Image className="w-5 h-5 text-indigo-600" />
+                      ) : (
+                        <FileText className="w-5 h-5 text-indigo-600" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{file.name}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-xs text-gray-500">
+                          {(file.size / 1024).toFixed(1)} KB
+                        </span>
+                        {file.processed && (
+                          <span className="flex items-center gap-1 text-xs text-green-600">
+                            <Check className="w-3 h-3" />
+                            Processed
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {file.ocrText && (
+                        <button
+                          onClick={() => viewOcrPreview(file)}
+                          className="p-1.5 hover:bg-indigo-100 rounded-lg transition-colors"
+                          title="View OCR"
+                        >
+                          <Eye className="w-4 h-4 text-indigo-600" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteFile(file.id)}
+                        className="p-1.5 hover:bg-red-100 rounded-lg transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4 text-red-600" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg flex flex-col overflow-hidden">
+          {/* Mode Selector */}
+          <div className="border-b border-gray-200 p-4">
+            <div className="flex gap-2 overflow-x-auto">
+              {[
+                { id: 'conversational', icon: Brain, label: 'Q&A', color: 'indigo' },
+                { id: 'summary', icon: Zap, label: 'Summary', color: 'purple' },
+                { id: 'detailed', icon: BookOpen, label: 'Detailed', color: 'pink' },
+                { id: 'flashcard', icon: FileText, label: 'Flashcards', color: 'blue' }
+              ].map((m) => {
+                const Icon = m.icon;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => setSelectedMode(m.id)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all whitespace-nowrap ${
+                      selectedMode === m.id
+                        ? `bg-${m.color}-100 text-${m.color}-700 shadow-md`
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Brain className="w-16 h-16 mx-auto mb-4 opacity-30" />
+                <p className="text-lg font-medium mb-2">Ready to help you study!</p>
+                <p className="text-sm">Upload your materials and ask questions</p>
+              </div>
+            ) : (
+              messages.map((msg: Message, idx: number) => {
+                const alignment = msg.type === 'system' ? 'justify-center' : (msg.type === 'user' ? 'justify-end' : 'justify-start');
+                return (
+                  <div key={idx} className={`flex ${alignment}`}>
+                    {msg.type === 'system' ? (
+                      <div className="px-4 py-2 bg-gray-100 text-gray-600 rounded-full text-sm">
+                        {msg.content}
+                      </div>
+                    ) : (
+                      <div
+                        className={`max-w-3xl rounded-2xl p-4 ${
+                          msg.type === 'user'
+                            ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        <div className="whitespace-pre-wrap">{msg.content}</div>
+                        {msg.sources && (
+                          <div className="mt-3 pt-3 border-t border-gray-300 text-xs opacity-75">
+                            📎 Sources: {msg.sources.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {isProcessing && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 rounded-2xl p-4 flex items-center gap-3">
+                  <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                  <span className="text-gray-600">Processing with Granite AI...</span>
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <div className="border-t border-gray-200 p-4">
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={inputMessage}
+                onChange={(e: any) => setInputMessage(e.target.value)}
+                onKeyDown={(e: any) => { if (e.key === 'Enter') { e.preventDefault(); handleSendMessage(); } }}
+                placeholder={uploadedFiles.length === 0 ? "Upload files first..." : "Ask a question about your materials..."}
+                disabled={uploadedFiles.length === 0 || isProcessing}
+                className="flex-1 px-4 py-3 rounded-xl border border-gray-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none transition-all disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputMessage.trim() || uploadedFiles.length === 0 || isProcessing}
+                className="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold hover:from-indigo-600 hover:to-purple-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* OCR Preview Modal */}
+      {showOcrModal && ocrPreview && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="font-bold text-lg">OCR Preview: {ocrPreview.name}</h3>
+              <button
+                onClick={() => setShowOcrModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded-xl">
+                {ocrPreview.ocrText}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default StudyMateApp;
